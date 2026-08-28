@@ -1,0 +1,28 @@
+{
+  "name": "pi-google-web-provider",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Experimental Pi provider for Google AI Mode via agent-browser UI automation",
+  "type": "module",
+  "bin": {
+    "pi-google-web": "./bin/pi-google-web.js"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.js"
+    ]
+  },
+  "scripts": {
+    "test": "node --test",
+    "check": "node --check ./bin/pi-google-web.js && node --check ./src/index.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "^0.84.2"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.84.2"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  }
+}

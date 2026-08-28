@@ -1,0 +1,5 @@
+node_modules/
+*.har
+*request*.json
+*.log
+.DS_Store
