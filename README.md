@@ -1,59 +1,110 @@
-# Pi Google Web Provider
+# Pi Google AI Mode Provider
 
-An experimental [Pi](https://pi.dev/) provider and CLI that drives Google AI Mode through a persistent `agent-browser` session.
+Use Google AI Mode as an experimental model provider for the [Pi coding agent](https://pi.dev/).
 
-The runtime uses the rendered Google UI: it opens a fresh AI Mode query, waits for the response to finish, and reads the answer from the page. It does not copy cookies into source code and does not depend on replaying Google's private `/async/*` request URLs.
+This project connects Pi's provider extension interface to Google AI Mode through a persistent local browser session. Pi supplies the system prompt, conversation history, and tool definitions; the adapter compacts them into a browser-safe prompt, submits it through Google AI Mode, reads the rendered response, and converts it back into Pi text or tool-call events.
 
-This is a proof of concept, not a stable Google API. Google can change the page, require sign-in, or present bot checks without notice. Use only a browser session you control and follow Google's terms and rate limits.
+> **Experimental:** this is browser automation around a consumer web product, not an official Google API or a production-ready inference service.
 
-## What is implemented
+## Origin
 
-- `pi-google-web` CLI with `ask`, `probe`, `doctor`, `capture`, and `template` commands.
-- Persistent agent-browser sessions with compatibility for agent-browser 0.26+ and newer releases.
-- A Pi provider registered as `google-web/google-ai-mode`.
-- Prompt-based Pi tool calls using a strict JSON envelope.
-- Abort handling, timeout handling, randomized live probes, and explicit Google bot-check errors.
-- Optional HAR and “Copy as fetch” extraction for diagnostics; these templates are not needed at runtime.
+I built the first version as a participant in [Punk Software Hack Night at Imbue](https://docs.google.com/presentation/d/1geFFFoCdy7v1aXJeA_QTM0l12sEqg6rY1HUkd563v9Q/mobilepresent?pli=1&slide=id.g3f88e86679e_0_111), at Imbue's San Francisco office on August 27, 2026.
 
-The provider does not have true token streaming or provider-reported usage. It emits the completed answer as one Pi text delta and reports zero usage/cost.
+The original question was simple: **could Google's AI Mode power a real coding agent, even though it is exposed as a web experience rather than a conventional model API?**
 
-## Install and check
+Pi was a natural harness for the experiment because its provider extension system makes the model boundary replaceable. The result is a small adapter rather than a fork of the coding agent:
 
-Requirements: Node 22.19+, Pi 0.84.2+, and `agent-browser` 0.26+.
+```text
+Pi turn
+  → compact system/history/tool prompt
+  → persistent agent-browser session
+  → Google AI Mode web UI
+  → rendered answer extraction
+  → Pi text or tool-call event
+```
+
+The project shares some of the playful reverse-engineering spirit of [Chipotlai Max](https://github.com/cyberpapiii/chipotlai-max): both ask whether a conversational web surface can be repurposed as the model behind a coding agent. The architecture here is different. This repository is a provider extension for Pi, uses a browser session controlled by its owner, does not pool anonymous sessions, and does not expose an OpenAI-compatible proxy.
+
+## How it works
+
+The active runtime follows the rendered UI rather than replaying a captured private endpoint:
+
+1. Pi calls the `google-web/google-ai-mode` provider with its current context.
+2. The adapter serializes the system prompt, recent messages, and compact tool schemas into a bounded prompt.
+3. `agent-browser` opens Google AI Mode in the persistent `pi-google-web` session.
+4. The adapter waits for the answer to finish and extracts the response from the page.
+5. A strict JSON response contract maps the result into a Pi text response or prompted tool call.
+
+An earlier version attempted to replay Google's private `/async/folif` and `/async/folwr` requests. Testing showed that captured request tokens could be tied to transient state or a previous answer. HAR extraction remains in the repository as a diagnostic and research artifact, but it is not the provider's runtime transport.
+
+To prevent Google HTTP 400 responses, the adapter compacts large Pi tool schemas and enforces both raw and URL-encoded query budgets. It also detects bot-check pages and asks the user to complete them manually in the same headed browser session.
+
+## What is included
+
+- Pi provider: `google-web/google-ai-mode`
+- Standalone `pi-google-web` CLI
+- Persistent `agent-browser` session support across older and newer CLI generations
+- Prompted text and tool-call response envelopes
+- Context and encoded-URL size limits
+- Abort, timeout, and subprocess cleanup handling
+- Randomized live probes that cannot pass from a cached answer
+- Optional private-request HAR/template diagnostics
+- Tests for prompt compaction, parsing, transport compatibility, and provider behavior
+
+The provider does not receive token usage from Google and does not provide true token streaming. It emits the completed answer as one Pi delta and reports zero usage and cost.
+
+## Requirements
+
+- Node.js 22.19 or newer
+- Pi 0.84.2 or newer
+- `agent-browser` 0.26 or newer
+- Access to Google AI Mode in your region/browser session
+
+Install `agent-browser` if needed:
 
 ```bash
+npm install -g agent-browser
+agent-browser install
+```
+
+## Quick start
+
+```bash
+git clone https://github.com/romanenko/pi-google-web-provider.git
+cd pi-google-web-provider
 npm install
 npm test
-node ./bin/pi-google-web.js doctor
-```
-
-To create a global `pi-google-web` command for this package:
-
-```bash
 npm link
+```
+
+Check the installation and run a fresh browser-backed probe:
+
+```bash
 pi-google-web doctor
-```
-
-## Validate and use the CLI
-
-Use a headed browser for the initial run so you can complete any Google check:
-
-```bash
 pi-google-web probe --headed
-pi-google-web ask --headed "Explain this stack trace"
 ```
 
-The probe generates a new random marker on every run. This ensures the browser produced a fresh answer instead of returning a cached capture.
+The first headed run may show a Google sign-in or bot-check page. Complete it manually in that browser, then retry the command. The adapter does not automate or bypass those checks.
 
-The default persistent browser session is `pi-google-web`. Override it with `--session` or `PI_GOOGLE_AGENT_BROWSER_SESSION`.
-
-If multiple `agent-browser` installations exist, select one explicitly:
+## CLI
 
 ```bash
-export PI_GOOGLE_AGENT_BROWSER_BIN="$(command -v agent-browser)"
+pi-google-web ask --headed "Explain why this test is failing"
 ```
 
-## Use as a Pi provider
+Available commands:
+
+| Command | Purpose |
+| --- | --- |
+| `ask` | Submit one prompt through Google AI Mode and print the answer |
+| `probe` | Send a randomized marker and verify that a fresh answer returns |
+| `doctor` | Report Pi, `agent-browser`, and optional template configuration |
+| `capture` | Record an interactive HAR for endpoint diagnostics |
+| `template` | Extract a sanitized diagnostic request template from HAR or “Copy as fetch” input |
+
+The default browser session is `pi-google-web`. Set `--session <name>` to use another one.
+
+## Use with Pi
 
 Run the extension directly:
 
@@ -67,19 +118,21 @@ pi \
   --model google-ai-mode
 ```
 
-For a persistent Pi installation, run `pi install .` from this directory and then select `google-web/google-ai-mode` in Pi.
+For a persistent Pi installation, run `pi install .` from this directory and select `google-web/google-ai-mode` inside Pi.
 
-Optional environment variables:
+### Configuration
 
-- `PI_GOOGLE_AGENT_BROWSER_SESSION`: persistent agent-browser session name.
-- `PI_GOOGLE_AGENT_BROWSER_BIN`: explicit agent-browser executable path.
-- `PI_GOOGLE_AGENT_BROWSER_HEADED=1`: show the browser window.
-- `PI_GOOGLE_WEB_MAX_QUERY_CHARS`: raw serialized Pi-context ceiling; default `12000`.
-- `PI_GOOGLE_WEB_MAX_ENCODED_QUERY_CHARS`: encoded Google query ceiling; default `7600` to avoid HTTP 400 responses.
+| Environment variable | Purpose | Default |
+| --- | --- | --- |
+| `PI_GOOGLE_AGENT_BROWSER_SESSION` | Persistent browser session | `pi-google-web` |
+| `PI_GOOGLE_AGENT_BROWSER_BIN` | Explicit `agent-browser` executable | resolved from `PATH` |
+| `PI_GOOGLE_AGENT_BROWSER_HEADED` | Set to `1` to show the browser | off |
+| `PI_GOOGLE_WEB_MAX_QUERY_CHARS` | Raw serialized Pi-context ceiling | `12000` |
+| `PI_GOOGLE_WEB_MAX_ENCODED_QUERY_CHARS` | Encoded Google query ceiling | `7600` |
 
 ## Optional HAR diagnostics
 
-The original private-endpoint experiment is retained as a diagnostic tool:
+The original endpoint exploration is retained for inspection and parser research:
 
 ```bash
 pi-google-web capture --out ./google-ai-capture.har
@@ -88,14 +141,38 @@ pi-google-web template \
   --out ~/.pi/agent/google-web-request.json
 ```
 
-The extractor recognizes the observed `/async/folif` and `/async/folwr` variants and writes templates with mode `0600`. Captured request tokens can be bound to one response, so a template is not treated as a reusable provider credential.
+The extractor recognizes the observed `/async/folif` and `/async/folwr` variants, removes cookie and browser-only headers, and writes templates with mode `0600`.
 
-HAR files and templates can contain live session values. Keep them private and remove old captures when no longer needed.
+HAR files and templates can contain live session values. They are ignored by this repository, should remain private, and should be removed when no longer needed.
 
-## Important limitations
+## Limitations
 
-- Google may return HTTP 429 or `/sorry/`; complete the check manually in the same headed session, then retry.
-- Pi's system prompt, history, and tool schemas are flattened into one Google query and truncated to the configured character limit.
-- Tool calls are prompted JSON rather than native Google tool calls, so malformed output can stop a turn.
+- Google can change AI Mode's markup, behavior, availability, or request limits at any time.
+- Google may require sign-in or return HTTP 429 and `/sorry/` bot-check pages.
+- Pi context must be compacted to fit a web query, so long history, system prompts, and tool descriptions are truncated.
+- Tool use is prompted JSON rather than a native Google tool-calling protocol.
 - Images, reasoning traces, exact token counts, and multipart streaming are not supported.
-- Google UI or selector changes may require adapter updates.
+- A single persistent browser session is not designed for concurrent high-volume requests.
+- The adapter can break without a release from either Pi or Google.
+
+## Research, legal, and responsible-use notice
+
+This repository was created as a research and educational proof of concept. It demonstrates browser automation, provider adaptation, prompt serialization, and the practical limits of using a consumer AI web interface as a coding-agent backend.
+
+- This project is not affiliated with, authorized by, endorsed by, or sponsored by Google, Imbue, or the Pi project.
+- Google AI Mode is not presented here as a public or supported API. Automated use may be restricted by Google's terms, policies, product rules, or applicable law. You are responsible for evaluating and complying with them.
+- Use only accounts, browser profiles, and sessions you control and are authorized to use.
+- Do not use this project to bypass authentication, CAPTCHAs, access controls, quotas, geographic restrictions, or rate limits.
+- Do not use it for production workloads, high-volume automation, resale, or activity that shifts unauthorized costs to another party.
+- Browser state and diagnostic captures can contain sensitive session data. Keep them local and private.
+
+The software is provided as-is, without guarantees of availability, correctness, legality for a particular use, or fitness for production. If you need a reliable coding model, use an official provider API with documented authorization and billing.
+
+## Acknowledgements
+
+- [Pi](https://pi.dev/) for the provider extension surface and coding-agent harness
+- `agent-browser` for local browser automation
+- [Imbue](https://imbue.com/) and the Punk Software Hack Night community for the setting and inspiration
+- [Chipotlai Max](https://github.com/cyberpapiii/chipotlai-max) for a memorable example of connecting an unconventional conversational backend to a coding agent—and for being candid about the experimental and legal risks
+
+Built under the `#punksoftware` banner in San Francisco.
